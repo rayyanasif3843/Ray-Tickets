@@ -1,10 +1,11 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-from discord.ui import View, Select, Button
 import os
 import json
 import asyncio
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+from discord.ui import View, Select, Button
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -28,18 +29,14 @@ QUESTIONS = [
     "Do you have anything else to say?"
 ]
 
+PANEL_FILE = "panel.json"
+APPLICATION_FILE = "applications.json"
+
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 intents.dm_messages = True
-
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
-
-PANEL_FILE = "panel.json"
-APPLICATION_FILE = "applications.json"
+intents.guilds = True
 
 
 # ================= FILE FUNCTIONS ================= #
@@ -134,13 +131,8 @@ async def ask_question(user, question):
         return message.author.id == user.id and isinstance(message.channel, discord.DMChannel)
 
     try:
-        msg = await bot.wait_for(
-            "message",
-            timeout=600,
-            check=check
-        )
+        msg = await bot.wait_for("message", timeout=600, check=check)
         return msg.content
-
     except asyncio.TimeoutError:
         return None
 
@@ -150,15 +142,15 @@ async def run_application(interaction: discord.Interaction):
 
     for question in QUESTIONS:
         answer = await ask_question(interaction.user, question)
-
         if answer is None:
             try:
-                embed = discord.Embed(
-                    title="❌ Application Cancelled",
-                    description="You took too long to answer or DMs are closed.",
-                    color=discord.Color.red()
+                await interaction.user.send(
+                    embed=discord.Embed(
+                        title="❌ Application Cancelled",
+                        description="You took too long to answer or DMs are closed.",
+                        color=discord.Color.red()
+                    )
                 )
-                await interaction.user.send(embed=embed)
             except discord.Forbidden:
                 pass
             return
@@ -206,14 +198,14 @@ async def run_application(interaction: discord.Interaction):
         view=ReviewView(interaction.user.id)
     )
 
-    success_embed = discord.Embed(
-        title="✅ Application Submitted",
-        description="Your application has been submitted.",
-        color=discord.Color.green()
-    )
-
     try:
-        await interaction.user.send(embed=success_embed)
+        await interaction.user.send(
+            embed=discord.Embed(
+                title="✅ Application Submitted",
+                description="Your application has been submitted.",
+                color=discord.Color.green()
+            )
+        )
     except discord.Forbidden:
         pass
 
@@ -311,7 +303,7 @@ class AcceptButton(Button):
             role = guild.get_role(role_id)
             if role:
                 try:
-                    await member.add_roles(role)
+                    await member.add_roles(role, reason="Application accepted")
                 except discord.Forbidden:
                     pass
 
@@ -342,10 +334,7 @@ class AcceptButton(Button):
             save_applications(data)
 
         if not interaction.response.is_done():
-            await interaction.response.send_message(
-                "Application accepted.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("Application accepted.", ephemeral=True)
 
 
 class DenyButton(Button):
@@ -401,10 +390,7 @@ class DenyButton(Button):
             save_applications(data)
 
         if not interaction.response.is_done():
-            await interaction.response.send_message(
-                "Application denied.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("Application denied.", ephemeral=True)
 
 
 class ReviewView(View):
@@ -414,12 +400,21 @@ class ReviewView(View):
         self.add_item(DenyButton(applicant_id))
 
 
+# ================= BOT SETUP ================= #
+
+class MyBot(commands.Bot):
+    async def setup_hook(self):
+        self.add_view(ApplicationView())
+        synced = await self.tree.sync()
+        print(f"Synced {len(synced)} slash commands.")
+
+
+bot = MyBot(command_prefix="!", intents=intents)
+
+
 # ================= PANEL COMMANDS ================= #
 
-@bot.tree.command(
-    name="application_panel",
-    description="Send the application panel"
-)
+@bot.tree.command(name="application_panel", description="Send the application panel")
 @app_commands.checks.has_permissions(administrator=True)
 async def application_panel(interaction: discord.Interaction):
     if interaction.channel is None:
@@ -429,29 +424,23 @@ async def application_panel(interaction: discord.Interaction):
         )
         return
 
+    await interaction.response.defer(ephemeral=True)
+
     await interaction.channel.send(
         embed=requirements_embed(),
         view=ApplicationView()
     )
-    await interaction.response.send_message(
-        "✅ Panel sent.",
-        ephemeral=True
-    )
+
+    await interaction.followup.send("✅ Panel sent.", ephemeral=True)
 
 
-@bot.tree.command(
-    name="panel",
-    description="Alias for application_panel"
-)
+@bot.tree.command(name="panel", description="Alias for application_panel")
 @app_commands.checks.has_permissions(administrator=True)
 async def panel(interaction: discord.Interaction):
     await application_panel(interaction)
 
 
-@bot.tree.command(
-    name="enablepanel",
-    description="Enable applications"
-)
+@bot.tree.command(name="enablepanel", description="Enable applications")
 @app_commands.checks.has_permissions(administrator=True)
 async def enablepanel(interaction: discord.Interaction):
     save_panel(True)
@@ -465,10 +454,7 @@ async def enablepanel(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(
-    name="disablepanel",
-    description="Disable applications"
-)
+@bot.tree.command(name="disablepanel", description="Disable applications")
 @app_commands.checks.has_permissions(administrator=True)
 async def disablepanel(interaction: discord.Interaction):
     save_panel(False)
@@ -485,15 +471,9 @@ async def disablepanel(interaction: discord.Interaction):
 # ================= APPLICATION COMMANDS ================= #
 
 @app_commands.describe(user="Applicant to accept")
-@bot.tree.command(
-    name="application_accept",
-    description="Accept an application"
-)
+@bot.tree.command(name="application_accept", description="Accept an application")
 @app_commands.checks.has_permissions(administrator=True)
-async def application_accept(
-    interaction: discord.Interaction,
-    user: discord.Member
-):
+async def application_accept(interaction: discord.Interaction, user: discord.Member):
     if interaction.guild is None:
         await interaction.response.send_message(
             "This command can only be used in a server.",
@@ -505,7 +485,7 @@ async def application_accept(
         role = interaction.guild.get_role(role_id)
         if role:
             try:
-                await user.add_roles(role)
+                await user.add_roles(role, reason="Application accepted")
             except discord.Forbidden:
                 pass
 
@@ -515,12 +495,13 @@ async def application_accept(
         save_applications(data)
 
     try:
-        embed = discord.Embed(
-            title="✅ Application Accepted",
-            description=f"You have been accepted in **{interaction.guild.name}**.",
-            color=discord.Color.green()
+        await user.send(
+            embed=discord.Embed(
+                title="✅ Application Accepted",
+                description=f"You have been accepted in **{interaction.guild.name}**.",
+                color=discord.Color.green()
+            )
         )
-        await user.send(embed=embed)
     except discord.Forbidden:
         pass
 
@@ -535,15 +516,9 @@ async def application_accept(
 
 
 @app_commands.describe(user="Applicant to deny")
-@bot.tree.command(
-    name="application_deny",
-    description="Deny an application"
-)
+@bot.tree.command(name="application_deny", description="Deny an application")
 @app_commands.checks.has_permissions(administrator=True)
-async def application_deny(
-    interaction: discord.Interaction,
-    user: discord.Member
-):
+async def application_deny(interaction: discord.Interaction, user: discord.Member):
     if interaction.guild is None:
         await interaction.response.send_message(
             "This command can only be used in a server.",
@@ -557,12 +532,13 @@ async def application_deny(
         save_applications(data)
 
     try:
-        embed = discord.Embed(
-            title="❌ Application Denied",
-            description=f"Your application in **{interaction.guild.name}** was denied.",
-            color=discord.Color.red()
+        await user.send(
+            embed=discord.Embed(
+                title="❌ Application Denied",
+                description=f"Your application in **{interaction.guild.name}** was denied.",
+                color=discord.Color.red()
+            )
         )
-        await user.send(embed=embed)
     except discord.Forbidden:
         pass
 
@@ -589,20 +565,6 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.followup.send(msg, ephemeral=True)
     else:
         await interaction.response.send_message(msg, ephemeral=True)
-
-
-# ================= READY EVENT ================= #
-
-@bot.event
-async def on_ready():
-    try:
-        bot.add_view(ApplicationView())
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
-    except Exception as e:
-        print(e)
-
-    print(f"Logged in as {bot.user}")
 
 
 # ================= RUN BOT ================= #
