@@ -1,4 +1,3 @@
-
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -32,6 +31,7 @@ QUESTIONS = [
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
+intents.dm_messages = True
 
 bot = commands.Bot(
     command_prefix="!",
@@ -341,10 +341,11 @@ class AcceptButton(Button):
             data[str(self.applicant_id)]["status"] = "accepted"
             save_applications(data)
 
-        await interaction.response.send_message(
-            "Application accepted.",
-            ephemeral=True
-        )
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "Application accepted.",
+                ephemeral=True
+            )
 
 
 class DenyButton(Button):
@@ -399,10 +400,11 @@ class DenyButton(Button):
             data[str(self.applicant_id)]["status"] = "denied"
             save_applications(data)
 
-        await interaction.response.send_message(
-            "Application denied.",
-            ephemeral=True
-        )
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "Application denied.",
+                ephemeral=True
+            )
 
 
 class ReviewView(View):
@@ -415,13 +417,16 @@ class ReviewView(View):
 # ================= PANEL COMMANDS ================= #
 
 @bot.tree.command(
-    name="panel",
-    description="Send application panel"
+    name="application_panel",
+    description="Send the application panel"
 )
 @app_commands.checks.has_permissions(administrator=True)
-async def panel(interaction: discord.Interaction):
+async def application_panel(interaction: discord.Interaction):
     if interaction.channel is None:
-        await interaction.response.send_message("This command must be used in a channel.", ephemeral=True)
+        await interaction.response.send_message(
+            "This command must be used in a channel.",
+            ephemeral=True
+        )
         return
 
     await interaction.channel.send(
@@ -432,6 +437,15 @@ async def panel(interaction: discord.Interaction):
         "✅ Panel sent.",
         ephemeral=True
     )
+
+
+@bot.tree.command(
+    name="panel",
+    description="Alias for application_panel"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def panel(interaction: discord.Interaction):
+    await application_panel(interaction)
 
 
 @bot.tree.command(
@@ -472,22 +486,28 @@ async def disablepanel(interaction: discord.Interaction):
 
 @app_commands.describe(user="Applicant to accept")
 @bot.tree.command(
-    name="accept_application",
+    name="application_accept",
     description="Accept an application"
 )
 @app_commands.checks.has_permissions(administrator=True)
-async def accept_application(
+async def application_accept(
     interaction: discord.Interaction,
     user: discord.Member
 ):
     if interaction.guild is None:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        await interaction.response.send_message(
+            "This command can only be used in a server.",
+            ephemeral=True
+        )
         return
 
     for role_id in ACCEPT_ROLES:
         role = interaction.guild.get_role(role_id)
         if role:
-            await user.add_roles(role)
+            try:
+                await user.add_roles(role)
+            except discord.Forbidden:
+                pass
 
     data = load_applications()
     if str(user.id) in data:
@@ -516,16 +536,19 @@ async def accept_application(
 
 @app_commands.describe(user="Applicant to deny")
 @bot.tree.command(
-    name="deny_application",
+    name="application_deny",
     description="Deny an application"
 )
 @app_commands.checks.has_permissions(administrator=True)
-async def deny_application(
+async def application_deny(
     interaction: discord.Interaction,
     user: discord.Member
 ):
     if interaction.guild is None:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        await interaction.response.send_message(
+            "This command can only be used in a server.",
+            ephemeral=True
+        )
         return
 
     data = load_applications()
@@ -551,6 +574,21 @@ async def deny_application(
         ),
         ephemeral=True
     )
+
+
+# ================= ERROR HANDLER ================= #
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You do not have permission to use this command."
+    else:
+        msg = f"An error occurred: {error}"
+
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
 
 
 # ================= READY EVENT ================= #
