@@ -1,3 +1,4 @@
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -15,15 +16,17 @@ ACCEPT_ROLES = [
     1511410382978285783
 ]
 
+SERVER_NAME = "GladXblox"
+
 QUESTIONS = [
-    "Why do you want to be a mod in Brainrot University? (3+ sentences)",
+    f"Why do you want to be a mod in {SERVER_NAME}? (3+ sentences)",
     "How old are you?",
-    "Do you have any experience of moderation?",
+    "Do you have any experience in moderation?",
     "2 members are fighting aggressively, and they are not listening to you. What would you do here?",
     "What will you do if you see two staff members fighting?",
-    "Will u get 800 weekly messages in ur first week?",
-    "How are u gonna be a better moderator then others? (3+ sentences)",
-    "Do u got anything else to say?"
+    "Will you get 800 weekly messages in your first week?",
+    f"How are you going to be a better moderator than others? (3+ sentences)",
+    "Do you have anything else to say?"
 ]
 
 intents = discord.Intents.default()
@@ -43,29 +46,29 @@ APPLICATION_FILE = "applications.json"
 
 def load_panel():
     if not os.path.exists(PANEL_FILE):
-        with open(PANEL_FILE, "w") as f:
+        with open(PANEL_FILE, "w", encoding="utf-8") as f:
             json.dump({"enabled": True}, f)
 
-    with open(PANEL_FILE, "r") as f:
+    with open(PANEL_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def save_panel(enabled):
-    with open(PANEL_FILE, "w") as f:
-        json.dump({"enabled": enabled}, f)
+    with open(PANEL_FILE, "w", encoding="utf-8") as f:
+        json.dump({"enabled": enabled}, f, indent=4)
 
 
 def load_applications():
     if not os.path.exists(APPLICATION_FILE):
-        with open(APPLICATION_FILE, "w") as f:
+        with open(APPLICATION_FILE, "w", encoding="utf-8") as f:
             json.dump({}, f)
 
-    with open(APPLICATION_FILE, "r") as f:
+    with open(APPLICATION_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def save_applications(data):
-    with open(APPLICATION_FILE, "w") as f:
+    with open(APPLICATION_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
 
@@ -85,7 +88,7 @@ def requirements_embed():
         "Select Staff Application below to apply."
     )
 
-    embed.set_author(name="Staff Applications")
+    embed.set_author(name=f"{SERVER_NAME} Staff Applications")
     return embed
 
 
@@ -122,13 +125,13 @@ async def ask_question(user, question):
         color=discord.Color.blurple()
     )
 
-    await user.send(embed=embed)
+    try:
+        await user.send(embed=embed)
+    except discord.Forbidden:
+        return None
 
     def check(message):
-        return (
-            message.author.id == user.id and
-            isinstance(message.channel, discord.DMChannel)
-        )
+        return message.author.id == user.id and isinstance(message.channel, discord.DMChannel)
 
     try:
         msg = await bot.wait_for(
@@ -149,12 +152,15 @@ async def run_application(interaction: discord.Interaction):
         answer = await ask_question(interaction.user, question)
 
         if answer is None:
-            embed = discord.Embed(
-                title="❌ Application Cancelled",
-                description="You took too long to answer.",
-                color=discord.Color.red()
-            )
-            await interaction.user.send(embed=embed)
+            try:
+                embed = discord.Embed(
+                    title="❌ Application Cancelled",
+                    description="You took too long to answer or DMs are closed.",
+                    color=discord.Color.red()
+                )
+                await interaction.user.send(embed=embed)
+            except discord.Forbidden:
+                pass
             return
 
         answers.append(answer)
@@ -169,7 +175,10 @@ async def run_application(interaction: discord.Interaction):
 
     channel = bot.get_channel(APPLICATION_CHANNEL_ID)
     if channel is None:
-        return
+        try:
+            channel = await bot.fetch_channel(APPLICATION_CHANNEL_ID)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
 
     application_embed = discord.Embed(
         title="📝 New Staff Application",
@@ -183,9 +192,10 @@ async def run_application(interaction: discord.Interaction):
     )
 
     for index, answer in enumerate(answers):
+        question_text = QUESTIONS[index]
         application_embed.add_field(
-            name=QUESTIONS[index],
-            value=answer,
+            name=question_text[:256],
+            value=answer[:1024],
             inline=False
         )
 
@@ -202,7 +212,10 @@ async def run_application(interaction: discord.Interaction):
         color=discord.Color.green()
     )
 
-    await interaction.user.send(embed=success_embed)
+    try:
+        await interaction.user.send(embed=success_embed)
+    except discord.Forbidden:
+        pass
 
 
 # ================= DROPDOWN ================= #
@@ -212,7 +225,7 @@ class ApplicationSelect(Select):
         options = [
             discord.SelectOption(
                 label="Staff Application",
-                description="Apply for Staff",
+                description=f"Apply for {SERVER_NAME} Staff",
                 emoji="📝"
             )
         ]
@@ -227,7 +240,7 @@ class ApplicationSelect(Select):
     async def callback(self, interaction: discord.Interaction):
         panel = load_panel()
 
-        if not panel["enabled"]:
+        if not panel.get("enabled", True):
             await interaction.response.send_message(
                 embed=disabled_embed(),
                 ephemeral=True
@@ -284,12 +297,15 @@ class AcceptButton(Button):
             return
 
         member = guild.get_member(self.applicant_id)
-        if not member:
-            await interaction.response.send_message(
-                "Applicant not found.",
-                ephemeral=True
-            )
-            return
+        if member is None:
+            try:
+                member = await guild.fetch_member(self.applicant_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                await interaction.response.send_message(
+                    "Applicant not found.",
+                    ephemeral=True
+                )
+                return
 
         for role_id in ACCEPT_ROLES:
             role = guild.get_role(role_id)
@@ -310,7 +326,7 @@ class AcceptButton(Button):
         except discord.Forbidden:
             pass
 
-        embed = interaction.message.embeds[0]
+        embed = interaction.message.embeds[0].copy()
         embed.color = discord.Color.green()
         embed.add_field(
             name="Result",
@@ -350,6 +366,11 @@ class DenyButton(Button):
             return
 
         member = guild.get_member(self.applicant_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(self.applicant_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                member = None
 
         if member:
             try:
@@ -363,7 +384,7 @@ class DenyButton(Button):
             except discord.Forbidden:
                 pass
 
-        embed = interaction.message.embeds[0]
+        embed = interaction.message.embeds[0].copy()
         embed.color = discord.Color.red()
         embed.add_field(
             name="Result",
@@ -399,6 +420,10 @@ class ReviewView(View):
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def panel(interaction: discord.Interaction):
+    if interaction.channel is None:
+        await interaction.response.send_message("This command must be used in a channel.", ephemeral=True)
+        return
+
     await interaction.channel.send(
         embed=requirements_embed(),
         view=ApplicationView()
@@ -421,7 +446,8 @@ async def enablepanel(interaction: discord.Interaction):
             title="✅ Panel Enabled",
             description="Applications are now open.",
             color=discord.Color.green()
-        )
+        ),
+        ephemeral=True
     )
 
 
@@ -437,7 +463,8 @@ async def disablepanel(interaction: discord.Interaction):
             title="❌ Panel Disabled",
             description="Applications are now closed.",
             color=discord.Color.red()
-        )
+        ),
+        ephemeral=True
     )
 
 
@@ -453,6 +480,10 @@ async def accept_application(
     interaction: discord.Interaction,
     user: discord.Member
 ):
+    if interaction.guild is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
     for role_id in ACCEPT_ROLES:
         role = interaction.guild.get_role(role_id)
         if role:
@@ -478,7 +509,8 @@ async def accept_application(
             title="✅ Accepted",
             description=f"{user.mention} has been accepted.",
             color=discord.Color.green()
-        )
+        ),
+        ephemeral=True
     )
 
 
@@ -492,6 +524,10 @@ async def deny_application(
     interaction: discord.Interaction,
     user: discord.Member
 ):
+    if interaction.guild is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
     data = load_applications()
     if str(user.id) in data:
         data[str(user.id)]["status"] = "denied"
@@ -512,7 +548,8 @@ async def deny_application(
             title="❌ Denied",
             description=f"{user.mention} has been denied.",
             color=discord.Color.red()
-        )
+        ),
+        ephemeral=True
     )
 
 
@@ -521,6 +558,7 @@ async def deny_application(
 @bot.event
 async def on_ready():
     try:
+        bot.add_view(ApplicationView())
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands.")
     except Exception as e:
