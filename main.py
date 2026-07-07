@@ -1,7 +1,3 @@
-
-
-
-
 import os
 import json
 import asyncio
@@ -14,6 +10,7 @@ from discord.ui import View, Select, Button
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 APPLICATION_CHANNEL_ID = 1511410675841237173
+GUILD_ID = 1511410146717339783  # Replace with your server ID for instant slash command syncing
 
 ACCEPT_ROLES = [
     1511410384517599423,
@@ -36,7 +33,6 @@ QUESTIONS = [
 PANEL_FILE = "panel.json"
 APPLICATION_FILE = "applications.json"
 
-# Prefix commands use comma
 COMMAND_PREFIX = ","
 
 intents = discord.Intents.default()
@@ -122,7 +118,7 @@ def started_embed():
 
 # ================= APPLICATION QUESTIONS ================= #
 
-async def ask_question(user, question):
+async def ask_question(user, question, bot):
     embed = discord.Embed(
         title="📝 Staff Application",
         description=question,
@@ -144,11 +140,11 @@ async def ask_question(user, question):
         return None
 
 
-async def run_application(interaction: discord.Interaction):
+async def run_application(interaction: discord.Interaction, bot):
     answers = []
 
     for question in QUESTIONS:
-        answer = await ask_question(interaction.user, question)
+        answer = await ask_question(interaction.user, question, bot)
         if answer is None:
             try:
                 await interaction.user.send(
@@ -266,7 +262,7 @@ class ApplicationSelect(Select):
             ephemeral=True
         )
 
-        await run_application(interaction)
+        await run_application(interaction, bot)
 
 
 class ApplicationView(View):
@@ -420,8 +416,11 @@ class ReviewView(View):
 class MyBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(ApplicationView())
-        synced = await self.tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
+        self.add_view(ReviewView(0))  # persistent view placeholder registration
+
+        guild_obj = discord.Object(id=GUILD_ID)
+        synced = await self.tree.sync(guild=guild_obj)
+        print(f"Synced {len(synced)} slash commands to guild {GUILD_ID}.")
 
 
 bot = MyBot(command_prefix=COMMAND_PREFIX, intents=intents)
