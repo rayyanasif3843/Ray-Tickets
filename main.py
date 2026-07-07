@@ -1,3 +1,7 @@
+
+
+
+
 import os
 import json
 import asyncio
@@ -31,6 +35,9 @@ QUESTIONS = [
 
 PANEL_FILE = "panel.json"
 APPLICATION_FILE = "applications.json"
+
+# Prefix commands use comma
+COMMAND_PREFIX = ","
 
 intents = discord.Intents.default()
 intents.members = True
@@ -318,7 +325,11 @@ class AcceptButton(Button):
         except discord.Forbidden:
             pass
 
-        embed = interaction.message.embeds[0].copy()
+        if interaction.message and interaction.message.embeds:
+            embed = interaction.message.embeds[0].copy()
+        else:
+            embed = discord.Embed(title="📝 New Staff Application", color=discord.Color.blurple())
+
         embed.color = discord.Color.green()
         embed.add_field(
             name="Result",
@@ -374,7 +385,11 @@ class DenyButton(Button):
             except discord.Forbidden:
                 pass
 
-        embed = interaction.message.embeds[0].copy()
+        if interaction.message and interaction.message.embeds:
+            embed = interaction.message.embeds[0].copy()
+        else:
+            embed = discord.Embed(title="📝 New Staff Application", color=discord.Color.blurple())
+
         embed.color = discord.Color.red()
         embed.add_field(
             name="Result",
@@ -409,10 +424,99 @@ class MyBot(commands.Bot):
         print(f"Synced {len(synced)} slash commands.")
 
 
-bot = MyBot(command_prefix="!", intents=intents)
+bot = MyBot(command_prefix=COMMAND_PREFIX, intents=intents)
 
 
-# ================= PANEL COMMANDS ================= #
+# ================= PREFIX COMMANDS ================= #
+
+@bot.command(name="panel")
+@commands.has_permissions(administrator=True)
+async def panel_prefix(ctx: commands.Context):
+    await ctx.send(embed=requirements_embed(), view=ApplicationView())
+
+
+@bot.command(name="application")
+@commands.has_permissions(administrator=True)
+async def application_prefix(ctx: commands.Context, action: str = None, user: discord.Member = None):
+    if action is None:
+        await ctx.send("Usage: `,application accept @user` or `,application deny @user`")
+        return
+
+    action = action.lower()
+
+    if action not in ("accept", "deny"):
+        await ctx.send("Invalid action. Use `accept` or `deny`.")
+        return
+
+    if user is None:
+        await ctx.send(f"Usage: `,application {action} @user`")
+        return
+
+    guild = ctx.guild
+    if guild is None:
+        await ctx.send("This command can only be used in a server.")
+        return
+
+    if action == "accept":
+        for role_id in ACCEPT_ROLES:
+            role = guild.get_role(role_id)
+            if role:
+                try:
+                    await user.add_roles(role, reason="Application accepted")
+                except discord.Forbidden:
+                    pass
+
+        data = load_applications()
+        if str(user.id) in data:
+            data[str(user.id)]["status"] = "accepted"
+            save_applications(data)
+
+        try:
+            await user.send(
+                embed=discord.Embed(
+                    title="✅ Application Accepted",
+                    description=f"You have been accepted in **{guild.name}**.",
+                    color=discord.Color.green()
+                )
+            )
+        except discord.Forbidden:
+            pass
+
+        await ctx.send(
+            embed=discord.Embed(
+                title="✅ Accepted",
+                description=f"{user.mention} has been accepted.",
+                color=discord.Color.green()
+            )
+        )
+
+    elif action == "deny":
+        data = load_applications()
+        if str(user.id) in data:
+            data[str(user.id)]["status"] = "denied"
+            save_applications(data)
+
+        try:
+            await user.send(
+                embed=discord.Embed(
+                    title="❌ Application Denied",
+                    description=f"Your application in **{guild.name}** was denied.",
+                    color=discord.Color.red()
+                )
+            )
+        except discord.Forbidden:
+            pass
+
+        await ctx.send(
+            embed=discord.Embed(
+                title="❌ Denied",
+                description=f"{user.mention} has been denied.",
+                color=discord.Color.red()
+            )
+        )
+
+
+# ================= SLASH COMMANDS ================= #
 
 @bot.tree.command(name="application_panel", description="Send the application panel")
 @app_commands.checks.has_permissions(administrator=True)
@@ -424,20 +528,11 @@ async def application_panel(interaction: discord.Interaction):
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
-
+    await interaction.response.send_message("Sending panel...", ephemeral=True)
     await interaction.channel.send(
         embed=requirements_embed(),
         view=ApplicationView()
     )
-
-    await interaction.followup.send("✅ Panel sent.", ephemeral=True)
-
-
-@bot.tree.command(name="panel", description="Alias for application_panel")
-@app_commands.checks.has_permissions(administrator=True)
-async def panel(interaction: discord.Interaction):
-    await application_panel(interaction)
 
 
 @bot.tree.command(name="enablepanel", description="Enable applications")
@@ -467,8 +562,6 @@ async def disablepanel(interaction: discord.Interaction):
         ephemeral=True
     )
 
-
-# ================= APPLICATION COMMANDS ================= #
 
 @app_commands.describe(user="Applicant to accept")
 @bot.tree.command(name="application_accept", description="Accept an application")
@@ -554,6 +647,16 @@ async def application_deny(interaction: discord.Interaction, user: discord.Membe
 
 # ================= ERROR HANDLER ================= #
 
+@bot.event
+async def on_command_error(ctx: commands.Context, error: Exception):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("You do not have permission to use this command.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Missing required argument.")
+    else:
+        await ctx.send(f"An error occurred: {error}")
+
+
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
@@ -572,4 +675,4 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 if TOKEN:
     bot.run(TOKEN)
 else:
-    raise RuntimeError("DISCORD_TOKEN environment variable is not set.")
+    raise RuntimeError("DISCORD_TOKEN environment variable is not set")
