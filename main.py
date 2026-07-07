@@ -10,7 +10,7 @@ from discord.ui import View, Select, Button
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 APPLICATION_CHANNEL_ID = 1511410675841237173
-GUILD_ID = 1511410146717339783  # Replace with your server ID for instant slash command syncing
+GUILD_ID = 1511410146717339783  # Your server ID for instant slash command syncing
 
 ACCEPT_ROLES = [
     1511410384517599423,
@@ -118,7 +118,7 @@ def started_embed():
 
 # ================= APPLICATION QUESTIONS ================= #
 
-async def ask_question(user, question, bot):
+async def ask_question(user, question, bot_instance):
     embed = discord.Embed(
         title="📝 Staff Application",
         description=question,
@@ -134,17 +134,17 @@ async def ask_question(user, question, bot):
         return message.author.id == user.id and isinstance(message.channel, discord.DMChannel)
 
     try:
-        msg = await bot.wait_for("message", timeout=600, check=check)
+        msg = await bot_instance.wait_for("message", timeout=600, check=check)
         return msg.content
     except asyncio.TimeoutError:
         return None
 
 
-async def run_application(interaction: discord.Interaction, bot):
+async def run_application(interaction: discord.Interaction, bot_instance):
     answers = []
 
     for question in QUESTIONS:
-        answer = await ask_question(interaction.user, question, bot)
+        answer = await ask_question(interaction.user, question, bot_instance)
         if answer is None:
             try:
                 await interaction.user.send(
@@ -168,10 +168,10 @@ async def run_application(interaction: discord.Interaction, bot):
     }
     save_applications(data)
 
-    channel = bot.get_channel(APPLICATION_CHANNEL_ID)
+    channel = bot_instance.get_channel(APPLICATION_CHANNEL_ID)
     if channel is None:
         try:
-            channel = await bot.fetch_channel(APPLICATION_CHANNEL_ID)
+            channel = await bot_instance.fetch_channel(APPLICATION_CHANNEL_ID)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             return
 
@@ -229,7 +229,8 @@ class ApplicationSelect(Select):
             placeholder="Choose an application...",
             min_values=1,
             max_values=1,
-            options=options
+            options=options,
+            custom_id="persistent_application_select"
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -262,7 +263,7 @@ class ApplicationSelect(Select):
             ephemeral=True
         )
 
-        await run_application(interaction, bot)
+        await run_application(interaction, interaction.client)
 
 
 class ApplicationView(View):
@@ -278,28 +279,23 @@ class AcceptButton(Button):
         super().__init__(
             label="Accept",
             emoji="✅",
-            style=discord.ButtonStyle.green
+            style=discord.ButtonStyle.green,
+            custom_id=f"accept_btn:{applicant_id}"
         )
-        self.applicant_id = applicant_id
 
     async def callback(self, interaction: discord.Interaction):
+        applicant_id = int(self.custom_id.split(":")[1])
         guild = interaction.guild
         if guild is None:
-            await interaction.response.send_message(
-                "This can only be used in a server.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("This can only be used in a server.", ephemeral=True)
             return
 
-        member = guild.get_member(self.applicant_id)
+        member = guild.get_member(applicant_id)
         if member is None:
             try:
-                member = await guild.fetch_member(self.applicant_id)
+                member = await guild.fetch_member(applicant_id)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                await interaction.response.send_message(
-                    "Applicant not found.",
-                    ephemeral=True
-                )
+                await interaction.response.send_message("Applicant not found.", ephemeral=True)
                 return
 
         for role_id in ACCEPT_ROLES:
@@ -336,8 +332,8 @@ class AcceptButton(Button):
         await interaction.message.edit(embed=embed, view=None)
 
         data = load_applications()
-        if str(self.applicant_id) in data:
-            data[str(self.applicant_id)]["status"] = "accepted"
+        if str(applicant_id) in data:
+            data[str(applicant_id)]["status"] = "accepted"
             save_applications(data)
 
         if not interaction.response.is_done():
@@ -349,23 +345,21 @@ class DenyButton(Button):
         super().__init__(
             label="Deny",
             emoji="❌",
-            style=discord.ButtonStyle.red
+            style=discord.ButtonStyle.red,
+            custom_id=f"deny_btn:{applicant_id}"
         )
-        self.applicant_id = applicant_id
 
     async def callback(self, interaction: discord.Interaction):
+        applicant_id = int(self.custom_id.split(":")[1])
         guild = interaction.guild
         if guild is None:
-            await interaction.response.send_message(
-                "This can only be used in a server.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("This can only be used in a server.", ephemeral=True)
             return
 
-        member = guild.get_member(self.applicant_id)
+        member = guild.get_member(applicant_id)
         if member is None:
             try:
-                member = await guild.fetch_member(self.applicant_id)
+                member = await guild.fetch_member(applicant_id)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 member = None
 
@@ -396,8 +390,8 @@ class DenyButton(Button):
         await interaction.message.edit(embed=embed, view=None)
 
         data = load_applications()
-        if str(self.applicant_id) in data:
-            data[str(self.applicant_id)]["status"] = "denied"
+        if str(applicant_id) in data:
+            data[str(applicant_id)]["status"] = "denied"
             save_applications(data)
 
         if not interaction.response.is_done():
@@ -405,20 +399,26 @@ class DenyButton(Button):
 
 
 class ReviewView(View):
-    def __init__(self, applicant_id):
+    def __init__(self, applicant_id=None):
         super().__init__(timeout=None)
-        self.add_item(AcceptButton(applicant_id))
-        self.add_item(DenyButton(applicant_id))
+        if applicant_id is not None:
+            self.add_item(AcceptButton(applicant_id))
+            self.add_item(DenyButton(applicant_id))
 
 
 # ================= BOT SETUP ================= #
 
 class MyBot(commands.Bot):
     async def setup_hook(self):
+        # Register persistent views globally
         self.add_view(ApplicationView())
-        self.add_view(ReviewView(0))  # persistent view placeholder registration
+        self.add_view(ReviewView())
 
         guild_obj = discord.Object(id=GUILD_ID)
+        
+        # CRITICAL FIX: Copies global commands to your guild object so they sync immediately
+        self.tree.copy_global_to(guild=guild_obj)
+        
         synced = await self.tree.sync(guild=guild_obj)
         print(f"Synced {len(synced)} slash commands to guild {GUILD_ID}.")
 
